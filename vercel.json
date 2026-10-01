@@ -1,7 +1,0 @@
-{
-  "version": 2,
-  "buildCommand": "cd client && npm run build",
-  "installCommand": "cd client && npm install --legacy-peer-deps --no-audit",
-  "outputDirectory": "client/dist",
-  "framework": "vite"
-}
