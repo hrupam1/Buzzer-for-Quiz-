@@ -1,80 +1,176 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { socket } from '../lib/socket';
+import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Play, Square, RotateCcw, ChevronRight, Volume2, VolumeX, ShieldAlert, Trash2 } from 'lucide-react';
 import { playWinnerSound } from '../lib/sounds';
 
+interface Team {
+  id: string;
+  name: string;
+  score: number;
+  connected: boolean;
+}
+
+interface RoomState {
+  currentQuestion: number;
+  buzzerActive: boolean;
+  winnerTeamId: string | null;
+  teams: Record<string, Team>;
+  buzzHistory: any[];
+}
+
+const defaultState: RoomState = {
+  currentQuestion: 1,
+  buzzerActive: false,
+  winnerTeamId: null,
+  teams: {},
+  buzzHistory: []
+};
+
 export default function HostDashboard() {
   const { roomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
-  const [roomState, setRoomState] = useState<any>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [error, setError] = useState('');
+  
+  const [roomState, setRoomState] = useState<RoomState>(defaultState);
+  const roomStateRef = useRef<RoomState>(defaultState);
+  const channelRef = useRef<any>(null);
+  const soundEnabledRef = useRef(soundEnabled);
 
-  // Sounds handled by Web Audio API
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  const updateRoomState = (updater: (prev: RoomState) => RoomState) => {
+    const next = updater(roomStateRef.current);
+    roomStateRef.current = next;
+    setRoomState(next);
+    localStorage.setItem(`buzzer_room_${roomCode}`, JSON.stringify(next));
+    if (channelRef.current) {
+      channelRef.current.send({ type: 'broadcast', event: 'sync', payload: next });
+    }
+  };
 
   useEffect(() => {
     const hostToken = localStorage.getItem('buzzer_hostToken');
-    
     if (!hostToken || !roomCode) {
       navigate('/');
       return;
     }
 
-    if (!socket.connected) {
-      socket.connect();
+    // Load state from local storage if exists
+    const savedState = localStorage.getItem(`buzzer_room_${roomCode}`);
+    if (savedState) {
+      try {
+        const parsed = JSON.parse(savedState);
+        roomStateRef.current = parsed;
+        setRoomState(parsed);
+      } catch (e) {
+        console.error(e);
+      }
     }
 
-    const onConnect = () => {
-      // Reconnect host
-      socket.emit('host:reconnect', { roomCode, hostToken }, (response: any) => {
-        if (response.success) {
-          setRoomState(response.room);
-        } else {
-          setError(response.message);
-          setTimeout(() => navigate('/'), 2000);
+    const channel = supabase.channel(`room:${roomCode}`);
+    channelRef.current = channel;
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const connectedTeamIds = new Set<string>();
+        
+        Object.values(state).forEach((presences: any) => {
+          presences.forEach((p: any) => {
+            if (p.teamId) connectedTeamIds.add(p.teamId);
+          });
+        });
+        
+        updateRoomState(prev => {
+          const nextTeams = { ...prev.teams };
+          Object.values(state).forEach((presences: any) => {
+            presences.forEach((p: any) => {
+              if (p.teamId) {
+                if (!nextTeams[p.teamId]) {
+                  nextTeams[p.teamId] = { id: p.teamId, name: p.teamName, score: 0, connected: true };
+                } else {
+                  nextTeams[p.teamId] = { ...nextTeams[p.teamId], connected: true, name: p.teamName };
+                }
+              }
+            });
+          });
+          
+          Object.keys(nextTeams).forEach(id => {
+            if (!connectedTeamIds.has(id)) {
+              nextTeams[id] = { ...nextTeams[id], connected: false };
+            }
+          });
+          return { ...prev, teams: nextTeams };
+        });
+      })
+      .on('broadcast', { event: 'buzz' }, ({ payload }) => {
+        const { teamId } = payload;
+        const current = roomStateRef.current;
+        
+        if (current.buzzerActive && current.winnerTeamId === null) {
+          updateRoomState(prev => ({
+            ...prev,
+            buzzerActive: false,
+            winnerTeamId: teamId,
+            buzzHistory: [
+              ...prev.buzzHistory,
+              { id: crypto.randomUUID(), teamId, result: 'winner', questionNumber: prev.currentQuestion, sequenceNumber: prev.buzzHistory.length + 1 }
+            ]
+          }));
+          
+          if (soundEnabledRef.current) playWinnerSound();
+          channel.send({ type: 'broadcast', event: 'winnerDeclared', payload: { teamId } });
+        } else if (current.buzzerActive) {
+          updateRoomState(prev => ({
+            ...prev,
+            buzzHistory: [
+              ...prev.buzzHistory,
+              { id: crypto.randomUUID(), teamId, result: 'late', questionNumber: prev.currentQuestion, sequenceNumber: prev.buzzHistory.length + 1 }
+            ]
+          }));
+        }
+      })
+      .on('broadcast', { event: 'requestSync' }, () => {
+        channel.send({ type: 'broadcast', event: 'sync', payload: roomStateRef.current });
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({ isHost: true });
         }
       });
-    };
-
-    const onStateUpdate = (newRoomState: any) => {
-      setRoomState(newRoomState);
-    };
-
-    const onWinnerDeclared = () => {
-      if (soundEnabled) {
-        playWinnerSound();
-      }
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('room:stateUpdate', onStateUpdate);
-    socket.on('room:winnerDeclared', onWinnerDeclared);
-
-    if (socket.connected) {
-      onConnect();
-    }
 
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('room:stateUpdate', onStateUpdate);
-      socket.off('room:winnerDeclared', onWinnerDeclared);
+      channel.unsubscribe();
     };
-  }, [roomCode, navigate, soundEnabled]);
+  }, [roomCode, navigate]);
 
-  const handleActivate = () => socket.emit('host:activateBuzzer', { roomCode });
-  const handleLock = () => socket.emit('host:lockBuzzer', { roomCode });
-  const handleReset = () => socket.emit('host:resetBuzzer', { roomCode });
-  const handleNextQuestion = () => socket.emit('host:nextQuestion', { roomCode });
+  const handleActivate = () => updateRoomState(p => ({ ...p, buzzerActive: true, winnerTeamId: null }));
+  const handleLock = () => updateRoomState(p => ({ ...p, buzzerActive: false }));
+  const handleReset = () => updateRoomState(p => ({ ...p, buzzerActive: false, winnerTeamId: null }));
+  const handleNextQuestion = () => updateRoomState(p => ({ ...p, currentQuestion: p.currentQuestion + 1, buzzerActive: false, winnerTeamId: null }));
   
   const handleUpdateScore = (teamId: string, scoreDelta: number) => {
-    socket.emit('host:updateScore', { roomCode, teamId, scoreDelta });
+    updateRoomState(p => {
+      if (!p.teams[teamId]) return p;
+      return {
+        ...p,
+        teams: { ...p.teams, [teamId]: { ...p.teams[teamId], score: p.teams[teamId].score + scoreDelta } }
+      };
+    });
   };
   
   const handleRemoveTeam = (teamId: string) => {
-    if(window.confirm('Remove this team?')) {
-      socket.emit('host:removeTeam', { roomCode, teamId });
+    if (window.confirm('Remove this team?')) {
+      updateRoomState(p => {
+        const nextTeams = { ...p.teams };
+        delete nextTeams[teamId];
+        return { ...p, teams: nextTeams };
+      });
     }
   };
 
@@ -82,14 +178,9 @@ export default function HostDashboard() {
     return <div className="min-h-screen flex items-center justify-center text-danger font-bold">{error}</div>;
   }
 
-  if (!roomState) {
-    return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading Dashboard...</div>;
-  }
-
-  const teamsList = Object.values(roomState.teams) as any[];
+  const teamsList = Object.values(roomState.teams) as Team[];
   const connectedTeamsCount = teamsList.filter(t => t.connected).length;
   
-  // Find current question's buzzes to show history
   const currentQuestionBuzzes = roomState.buzzHistory
     .filter((b: any) => b.questionNumber === roomState.currentQuestion)
     .sort((a: any, b: any) => a.sequenceNumber - b.sequenceNumber);
@@ -98,8 +189,6 @@ export default function HostDashboard() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
-      
-      {/* Sidebar / Team List */}
       <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col">
         <div className="p-6 border-b border-slate-800">
           <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-500 mb-1">
@@ -152,9 +241,7 @@ export default function HostDashboard() {
         </div>
       </div>
 
-      {/* Main Control Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        {/* Background glow based on state */}
         <div className="absolute inset-0 z-0 pointer-events-none transition-colors duration-1000" style={{
           background: roomState.buzzerActive 
             ? 'radial-gradient(circle at center, rgba(34,197,94,0.1) 0%, transparent 70%)' 
@@ -164,7 +251,6 @@ export default function HostDashboard() {
         }} />
 
         <div className="p-8 z-10 flex flex-col h-full">
-          
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-3xl font-black text-white flex items-center gap-4">
               QUESTION <span className="bg-slate-800 px-4 py-1 rounded-xl text-primary">{roomState.currentQuestion}</span>
@@ -177,7 +263,6 @@ export default function HostDashboard() {
             </button>
           </div>
 
-          {/* Winner Display Area */}
           <div className="flex-1 flex flex-col items-center justify-center mb-8 min-h-[300px]">
             <AnimatePresence mode="wait">
               {winnerTeam ? (
@@ -193,7 +278,6 @@ export default function HostDashboard() {
                     {winnerTeam.name}
                   </div>
                   
-                  {/* Action buttons for host to evaluate */}
                   <div className="flex items-center justify-center gap-4 mt-8">
                     <button 
                       onClick={() => handleUpdateScore(winnerTeam.id, 10)}
@@ -233,7 +317,6 @@ export default function HostDashboard() {
             </AnimatePresence>
           </div>
 
-          {/* Big Controls Area */}
           <div className="grid grid-cols-3 gap-4 h-32 shrink-0">
             {!roomState.buzzerActive && !roomState.winnerTeamId ? (
               <button 
@@ -259,7 +342,6 @@ export default function HostDashboard() {
             )}
           </div>
           
-          {/* Buzz History (Optional for bottom area) */}
           {currentQuestionBuzzes.length > 0 && (
             <div className="mt-8 pt-6 border-t border-slate-800/50">
               <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Buzz Order</h4>

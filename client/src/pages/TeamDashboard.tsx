@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { socket } from '../lib/socket';
+import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Wifi, WifiOff } from 'lucide-react';
 import { playBuzzSound, playLockSound } from '../lib/sounds';
@@ -10,105 +10,72 @@ export default function TeamDashboard() {
   const navigate = useNavigate();
   const [isConnected, setIsConnected] = useState(false);
   const [roomState, setRoomState] = useState<any>(null);
-  const [myTeamId, setMyTeamId] = useState<string | null>(null);
-  const [teamName, setTeamName] = useState('');
-  const [buzzStatus, setBuzzStatus] = useState<'idle' | 'sending' | 'locked' | 'winner'>('idle');
   
-  // Sounds handled by Web Audio API
+  const savedTeamId = localStorage.getItem('buzzer_teamId');
+  const savedName = localStorage.getItem('buzzer_teamName') || 'Unknown Team';
+  
+  const [buzzStatus, setBuzzStatus] = useState<'idle' | 'sending' | 'locked' | 'winner'>('idle');
+  const channelRef = useRef<any>(null);
 
   useEffect(() => {
-    const savedTeamId = localStorage.getItem('buzzer_teamId');
-    const savedName = localStorage.getItem('buzzer_teamName');
-    
-    if (!savedTeamId && !socket.connected) {
-      // Direct access without joining
+    if (!savedTeamId || !roomCode) {
       navigate('/');
       return;
     }
-    
-    if (savedName) setTeamName(savedName);
-    
-    if (!socket.connected) {
-      socket.connect();
-    }
 
-    const onConnect = () => {
-      setIsConnected(true);
-      // Rejoin room
-      socket.emit('team:joinRoom', { 
-        roomCode, 
-        teamName: savedName || 'Unknown Team',
-        previousTeamId: savedTeamId 
-      }, (response: any) => {
-        if (response.success) {
-          setMyTeamId(response.teamId);
-          localStorage.setItem('buzzer_teamId', response.teamId);
-          setRoomState(response.room);
-        } else {
-          // Room might be closed
-          navigate('/');
-        }
-      });
-    };
+    const channel = supabase.channel(`room:${roomCode}`);
+    channelRef.current = channel;
 
-    const onDisconnect = () => setIsConnected(false);
-    
-    const onStateUpdate = (newRoomState: any) => {
-      setRoomState(newRoomState);
-      
-      if (newRoomState.buzzerActive) {
-        setBuzzStatus('idle');
-      } else if (newRoomState.winnerTeamId === savedTeamId || newRoomState.winnerTeamId === myTeamId) {
-        setBuzzStatus('winner');
-      } else {
-        setBuzzStatus('locked');
-      }
-    };
-
-    const onWinnerDeclared = ({ teamId }: any) => {
-      if (teamId === myTeamId || teamId === savedTeamId) {
-         setBuzzStatus('winner');
-      } else {
-         setBuzzStatus('locked');
-      }
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('room:stateUpdate', onStateUpdate);
-    socket.on('room:winnerDeclared', onWinnerDeclared);
-
-    if (socket.connected) {
-      onConnect();
-    }
-
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('room:stateUpdate', onStateUpdate);
-      socket.off('room:winnerDeclared', onWinnerDeclared);
-    };
-  }, [roomCode, navigate, myTeamId]);
-
-  const handleBuzz = () => {
-    if (buzzStatus !== 'idle' || !roomState?.buzzerActive) return;
-    
-    setBuzzStatus('sending');
-    // Attempt to play sound immediately for instant feedback
-    playBuzzSound();
-    
-    socket.emit('team:buzz', { roomCode, teamId: myTeamId }, (response: any) => {
-      if (response.success) {
-        if (response.isWinner) {
+    channel
+      .on('broadcast', { event: 'sync' }, ({ payload }) => {
+        setRoomState(payload);
+        
+        if (payload.buzzerActive) {
+          setBuzzStatus('idle');
+        } else if (payload.winnerTeamId === savedTeamId) {
           setBuzzStatus('winner');
         } else {
           setBuzzStatus('locked');
-          playLockSound();
         }
-      } else {
-        // Failed
-        setBuzzStatus('locked');
-      }
+      })
+      .on('broadcast', { event: 'winnerDeclared' }, ({ payload }) => {
+        if (payload.teamId === savedTeamId) {
+           setBuzzStatus('winner');
+        } else {
+           setBuzzStatus('locked');
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsConnected(true);
+          await channel.track({ teamId: savedTeamId, teamName: savedName });
+          // Request current state from host
+          channel.send({ type: 'broadcast', event: 'requestSync', payload: {} });
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setIsConnected(false);
+        }
+      });
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [roomCode, navigate, savedTeamId, savedName]);
+
+  const handleBuzz = () => {
+    if (buzzStatus !== 'idle' || !roomState?.buzzerActive || !channelRef.current) return;
+    
+    setBuzzStatus('sending');
+    playBuzzSound();
+    
+    channelRef.current.send({
+      type: 'broadcast',
+      event: 'buzz',
+      payload: { teamId: savedTeamId }
+    }).then(() => {
+       // We don't get a direct callback for success, but the host will send a sync or winnerDeclared
+       // If no response within a short time, the host might be lagging
+    }).catch(() => {
+       setBuzzStatus('locked');
     });
   };
 
@@ -117,23 +84,23 @@ export default function TeamDashboard() {
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="animate-pulse flex flex-col items-center">
           <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
-          <p className="text-slate-400 font-medium">Connecting to room...</p>
+          <p className="text-slate-400 font-medium">Connecting to host...</p>
+          <p className="text-slate-500 text-sm mt-2">Make sure the Host is currently in the room.</p>
         </div>
       </div>
     );
   }
 
   const isBuzzerActive = roomState.buzzerActive;
-  const isWinner = roomState.winnerTeamId === myTeamId;
+  const isWinner = roomState.winnerTeamId === savedTeamId;
   const hasWinner = roomState.winnerTeamId !== null;
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background selection:bg-primary/30">
-      {/* Header */}
       <header className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between sticky top-0 z-50 glass">
         <div>
           <h2 className="font-bold text-white text-lg tracking-tight truncate max-w-[200px] uppercase">
-            {teamName}
+            {savedName}
           </h2>
           <div className="flex items-center text-xs font-medium mt-1">
             {isConnected ? (
@@ -142,7 +109,7 @@ export default function TeamDashboard() {
               <span className="text-danger flex items-center gap-1"><WifiOff size={12} /> Reconnecting...</span>
             )}
             <span className="mx-2 text-slate-600">|</span>
-            <span className="text-slate-400">Score: <span className="text-white font-bold">{roomState.teams[myTeamId || '']?.score || 0}</span></span>
+            <span className="text-slate-400">Score: <span className="text-white font-bold">{roomState.teams[savedTeamId || '']?.score || 0}</span></span>
           </div>
         </div>
         <div className="text-right">
@@ -153,10 +120,7 @@ export default function TeamDashboard() {
         </div>
       </header>
 
-      {/* Main Content Area */}
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        
-        {/* Status Indicator */}
         <div className="absolute top-8 left-0 w-full text-center z-10 px-4">
           <h3 className="text-sm font-bold text-slate-400 uppercase tracking-[0.2em] mb-2">
             Question {roomState.currentQuestion}
@@ -220,10 +184,7 @@ export default function TeamDashboard() {
           </AnimatePresence>
         </div>
 
-        {/* Big Buzzer Button */}
         <div className="relative w-full max-w-sm aspect-square mt-12 flex items-center justify-center">
-          
-          {/* Outer glow rings based on state */}
           {isBuzzerActive && (
              <motion.div 
                animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.6, 0.3] }} 
@@ -259,7 +220,6 @@ export default function TeamDashboard() {
           </motion.button>
         </div>
 
-        {/* Info Text below buzzer */}
         <div className="mt-12 text-center h-20">
           <AnimatePresence mode="wait">
             {hasWinner && !isWinner && (

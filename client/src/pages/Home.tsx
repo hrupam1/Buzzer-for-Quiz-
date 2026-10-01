@@ -1,12 +1,19 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { socket } from '../lib/socket';
 import { motion } from 'framer-motion';
+
+function generateRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
 
 export default function Home() {
   const [roomCode, setRoomCode] = useState('');
   const [teamName, setTeamName] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
@@ -17,60 +24,25 @@ export default function Home() {
       return;
     }
     setError('');
-    setIsLoading(true);
-
-    if (!socket.connected) {
-      socket.connect();
-    }
 
     const uppercaseRoomCode = roomCode.toUpperCase();
-
-    // Set a timeout in case the server is unreachable
-    const connectionTimeout = setTimeout(() => {
-      if (!socket.connected) {
-        setIsLoading(false);
-        setError('Cannot connect to server. Is the backend running?');
-      }
-    }, 3000);
-
-    socket.emit('team:joinRoom', { roomCode: uppercaseRoomCode, teamName }, (response: any) => {
-      clearTimeout(connectionTimeout);
-      setIsLoading(false);
-      if (response.success) {
-        localStorage.setItem('buzzer_teamId', response.teamId);
-        localStorage.setItem('buzzer_roomCode', uppercaseRoomCode);
-        localStorage.setItem('buzzer_teamName', teamName);
-        navigate(`/team/${uppercaseRoomCode}`);
-      } else {
-        setError(response.message || 'Failed to join room');
-      }
-    });
+    
+    // We generate a teamId if one doesn't exist
+    if (!localStorage.getItem('buzzer_teamId')) {
+      localStorage.setItem('buzzer_teamId', crypto.randomUUID());
+    }
+    
+    localStorage.setItem('buzzer_roomCode', uppercaseRoomCode);
+    localStorage.setItem('buzzer_teamName', teamName);
+    
+    navigate(`/team/${uppercaseRoomCode}`);
   };
 
   const handleCreateRoom = () => {
-    setIsLoading(true);
-    if (!socket.connected) {
-      socket.connect();
-    }
-
-    const connectionTimeout = setTimeout(() => {
-      if (!socket.connected) {
-        setIsLoading(false);
-        setError('Cannot connect to server. Is the backend running?');
-      }
-    }, 3000);
-
-    socket.emit('host:createRoom', (response: any) => {
-      clearTimeout(connectionTimeout);
-      setIsLoading(false);
-      if (response.success) {
-        localStorage.setItem('buzzer_hostToken', response.hostToken);
-        localStorage.setItem('buzzer_roomCode', response.roomCode);
-        navigate(`/host/${response.roomCode}`);
-      } else {
-        setError('Failed to create room.');
-      }
-    });
+    const newRoomCode = generateRoomCode();
+    localStorage.setItem('buzzer_hostToken', crypto.randomUUID());
+    localStorage.setItem('buzzer_roomCode', newRoomCode);
+    navigate(`/host/${newRoomCode}`);
   };
 
   return (
@@ -124,10 +96,9 @@ export default function Home() {
 
           <button
             type="submit"
-            disabled={isLoading}
             className="w-full bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/25 transition-all transform active:scale-95 flex items-center justify-center gap-2"
           >
-            {isLoading ? 'CONNECTING...' : 'JOIN QUIZ'}
+            JOIN QUIZ
           </button>
         </form>
 
@@ -135,7 +106,6 @@ export default function Home() {
           <p className="text-slate-400 text-sm mb-4">Are you the quiz master?</p>
           <button
             onClick={handleCreateRoom}
-            disabled={isLoading}
             className="text-primary hover:text-white font-semibold transition-colors flex items-center justify-center gap-2 mx-auto"
           >
             Create a New Room
