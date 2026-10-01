@@ -95,6 +95,12 @@ export default function TeamDashboard() {
   const isWinner = roomState.winnerTeamId === savedTeamId;
   const hasWinner = roomState.winnerTeamId !== null;
 
+  const currentQuestionBuzzes = roomState.buzzHistory
+    ? roomState.buzzHistory
+        .filter((b: any) => b.questionNumber === roomState.currentQuestion)
+        .sort((a: any, b: any) => a.sequenceNumber - b.sequenceNumber)
+    : [];
+
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background selection:bg-primary/30">
       <header className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between sticky top-0 z-50 glass">
@@ -222,7 +228,7 @@ export default function TeamDashboard() {
           </motion.button>
         </div>
 
-        <div className="text-center h-20 shrink-0 flex flex-col justify-end w-full">
+        <div className="text-center shrink-0 flex flex-col justify-end w-full min-h-[80px]">
           <AnimatePresence mode="wait">
             {hasWinner && !isWinner && (
                <motion.div 
@@ -251,6 +257,35 @@ export default function TeamDashboard() {
                </motion.div>
             )}
           </AnimatePresence>
+
+          {hasWinner && currentQuestionBuzzes.length > 0 && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 w-full max-w-[280px] mx-auto bg-slate-900/60 rounded-xl p-3 border border-slate-800/80 backdrop-blur-sm"
+            >
+              <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 border-b border-slate-800/50 pb-2">Buzz Order Transparency</h4>
+              <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1 text-left">
+                {currentQuestionBuzzes.map((buzz: any, index: number) => {
+                  const team = roomState.teams[buzz.teamId];
+                  if (!team) return null;
+                  const isMe = buzz.teamId === savedTeamId;
+                  const isFirst = index === 0;
+                  return (
+                    <div key={buzz.id} className={`flex items-center justify-between text-xs p-2 rounded-lg ${isMe ? (isFirst ? 'bg-primary/20 text-primary-100 font-bold border border-primary/30' : 'bg-slate-800 text-white font-bold border border-slate-700') : (isFirst ? 'bg-white/5 text-white font-bold border border-white/10' : 'text-slate-400')}`}>
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <span className={`w-5 text-center shrink-0 ${isFirst ? 'text-primary font-black' : 'opacity-50'}`}>#{index + 1}</span>
+                        <span className="truncate">{team.name} {isMe && <span className="opacity-70 text-[10px] ml-1">(You)</span>}</span>
+                      </div>
+                      <div className="shrink-0 text-[9px] uppercase tracking-widest opacity-50 ml-2">
+                         {isFirst ? 'Winner' : 'Late'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
         </div>
       </main>
     </div>
