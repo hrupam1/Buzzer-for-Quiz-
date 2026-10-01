@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: buzzer-server
+    env: node
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 4000
