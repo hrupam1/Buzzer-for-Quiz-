@@ -209,6 +209,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('team:buzz', ({ roomCode, teamId }, callback) => {
+    
     const room = rooms[roomCode];
     const serverTimestamp = Date.now();
 
