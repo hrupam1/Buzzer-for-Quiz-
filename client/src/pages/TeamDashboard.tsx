@@ -120,11 +120,12 @@ export default function TeamDashboard() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute top-8 left-0 w-full text-center z-10 px-4">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-[0.2em] mb-2">
+      <main className="flex-1 flex flex-col items-center justify-between py-8 px-4 sm:py-10 sm:px-6 relative overflow-hidden min-h-[400px]">
+        <div className="w-full text-center z-10 shrink-0 min-h-[70px]">
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-[0.2em] mb-3">
             Question {roomState.currentQuestion}
           </h3>
+          <div className="flex justify-center">
           <AnimatePresence mode="wait">
             {!isBuzzerActive && !hasWinner && (
               <motion.div
@@ -182,9 +183,10 @@ export default function TeamDashboard() {
               </motion.div>
             )}
           </AnimatePresence>
+          </div>
         </div>
 
-        <div className="relative w-full max-w-sm aspect-square mt-12 flex items-center justify-center">
+        <div className="relative w-full max-w-[240px] sm:max-w-xs md:max-w-sm aspect-square flex items-center justify-center my-auto shrink">
           {isBuzzerActive && (
              <motion.div 
                animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.6, 0.3] }} 
@@ -220,16 +222,16 @@ export default function TeamDashboard() {
           </motion.button>
         </div>
 
-        <div className="mt-12 text-center h-20">
+        <div className="text-center h-20 shrink-0 flex flex-col justify-end w-full">
           <AnimatePresence mode="wait">
             {hasWinner && !isWinner && (
                <motion.div 
                  key="lost"
                  initial={{ opacity: 0, y: 10 }}
                  animate={{ opacity: 1, y: 0 }}
-                 className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"
+                 className="bg-slate-800/50 rounded-xl p-4 border border-slate-700 inline-block w-full max-w-[280px] mx-auto"
                >
-                 <p className="text-slate-300 mb-1">
+                 <p className="text-slate-300 mb-1 truncate">
                    <span className="font-bold text-white">{roomState.teams[roomState.winnerTeamId]?.name || 'Another team'}</span> buzzed first.
                  </p>
                  <p className="text-xs text-slate-500 uppercase font-bold tracking-widest">Wait for host</p>
@@ -240,7 +242,7 @@ export default function TeamDashboard() {
                 key="won"
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="bg-primary/10 rounded-xl p-4 border border-primary/30"
+                className="bg-primary/10 rounded-xl p-4 border border-primary/30 inline-block w-full max-w-[280px] mx-auto"
                >
                  <p className="text-primary-100 font-bold mb-1 text-lg">
                    You got it!
