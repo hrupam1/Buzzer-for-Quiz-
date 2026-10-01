@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,7 +13,6 @@ export default function TeamDashboard() {
   const [myTeamId, setMyTeamId] = useState<string | null>(null);
   const [teamName, setTeamName] = useState('');
   const [buzzStatus, setBuzzStatus] = useState<'idle' | 'sending' | 'locked' | 'winner'>('idle');
-  const [responseTimes, setResponseTimes] = useState<{ [key: string]: number }>({});
   
   // Sounds handled by Web Audio API
 
@@ -66,7 +65,7 @@ export default function TeamDashboard() {
       }
     };
 
-    const onWinnerDeclared = ({ teamId, timestamp }: any) => {
+    const onWinnerDeclared = ({ teamId }: any) => {
       if (teamId === myTeamId || teamId === savedTeamId) {
          setBuzzStatus('winner');
       } else {
