@@ -306,6 +306,6 @@ io.on('connection', (socket: Socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+httpServer.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`Server listening on port ${PORT} at 0.0.0.0`);
 });
