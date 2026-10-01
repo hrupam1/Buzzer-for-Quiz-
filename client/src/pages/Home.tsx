@@ -48,6 +48,9 @@ export default function Home() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
       {/* Background decoration */}
+      <div className="absolute top-4 w-full text-center z-20">
+        <p className="text-slate-400/80 text-xs font-bold tracking-[0.3em] uppercase">Created by Rupam Haldar</p>
+      </div>
       <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-primary/30 rounded-full blur-[100px]" />
       <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-danger/20 rounded-full blur-[100px]" />
 
