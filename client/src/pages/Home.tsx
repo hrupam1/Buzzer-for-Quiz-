@@ -25,7 +25,16 @@ export default function Home() {
 
     const uppercaseRoomCode = roomCode.toUpperCase();
 
+    // Set a timeout in case the server is unreachable
+    const connectionTimeout = setTimeout(() => {
+      if (!socket.connected) {
+        setIsLoading(false);
+        setError('Cannot connect to server. Is the backend running?');
+      }
+    }, 3000);
+
     socket.emit('team:joinRoom', { roomCode: uppercaseRoomCode, teamName }, (response: any) => {
+      clearTimeout(connectionTimeout);
       setIsLoading(false);
       if (response.success) {
         localStorage.setItem('buzzer_teamId', response.teamId);
@@ -44,7 +53,15 @@ export default function Home() {
       socket.connect();
     }
 
+    const connectionTimeout = setTimeout(() => {
+      if (!socket.connected) {
+        setIsLoading(false);
+        setError('Cannot connect to server. Is the backend running?');
+      }
+    }, 3000);
+
     socket.emit('host:createRoom', (response: any) => {
+      clearTimeout(connectionTimeout);
       setIsLoading(false);
       if (response.success) {
         localStorage.setItem('buzzer_hostToken', response.hostToken);
